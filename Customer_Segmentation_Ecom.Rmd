@@ -1,0 +1,433 @@
+---
+title: "High value customers identification for an E-Commerce company"
+author: "Gaurav Mahajan"
+date: "2/1/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+linkedin profile: linkedin.com/in/mahajang
+
+Background of Problem Statement:
+ A UK-based online retail store has captured the sales data for different products for the period of one year (Nov 2016 to Dec 2017). The organization sells gifts primarily on the online platform. The customers who make a purchase consume directly for themselves. There are small businesses that buy in bulk and sell to other customers through the retail outlet channel.
+
+Project Objective:
+Find significant customers for the business who make high purchases of their favourite products. The organization wants to roll out a loyalty program to the high-value customers after identification of segments. Use the clustering methodology to segment customers into groups
+
+
+# Load Data
+``` {r}
+library(dplyr)
+library(caret)
+
+# Load Data:
+setwd("C:/OLD_LAPTOP/Gaurav/Purdue/4. Data Science with R/5. Gradable_Projects")
+Ecom_data<- read.csv("C:/OLD_LAPTOP/Gaurav/Purdue/4. Data Science with R/5. Gradable_Projects/Ecommerce.csv", header=TRUE)
+
+dim(Ecom_data)
+names(Ecom_data)
+str(Ecom_data)
+# View(Ecom_data)
+
+summary(Ecom_data)
+```
+
+
+# Data Pre-processing and Prepration :
+``` {r}
+
+#Covert variables:
+library(lubridate)
+Ecom_data$InvoiceDate<- dmy(Ecom_data$InvoiceDate)  #factor to Date
+Ecom_data$CustomerID<- as.factor(Ecom_data$CustomerID)
+str(Ecom_data)
+# names(Ecom_data)
+
+#Add New variable - Sales Value:
+Ecom_data<- Ecom_data %>%
+  mutate(Sales_Value = Quantity * UnitPrice)
+
+summary(Ecom_data)
+
+#Clean the data :
+
+#Step 1: Remove data with Negative Quantities
+Ecom_data1<- Ecom_data %>%     #Quantity > 0
+  filter(Quantity>0)
+
+#Step 2: Remove data with Negative Price
+Ecom_data2<- Ecom_data1 %>%     #Price > 0
+  filter(UnitPrice>0)
+
+#Step 3: Retain data for those customers who has Customer ID ie. remove Unknown customers
+
+#Check missing values:
+colSums(is.na(Ecom_data)) # there are 135080 records with missing values shown as CustomerID. 
+
+Ecom_data3<- Ecom_data2 %>%
+  filter(CustomerID !="NA's")
+
+# Create month, year and hour of day variables:
+
+# # Separate date and time components of invoice date
+Ecom_data3 <- Ecom_data3
+dates<- strptime(as.Date(Ecom_data3$InvoiceDate),format="%Y-%m-%d")
+
+Ecom_data3$Year <- as.factor(format(dates, "%Y"))
+Ecom_data3$Month <- as.factor(format(dates, "%m"))
+Ecom_data3$Day <- as.factor(format(dates, "%d"))
+Ecom_data3$Day_w <- as.factor(format(dates, "%a"))
+
+dim(Ecom_data3)
+str(Ecom_data3)
+summary(Ecom_data3)
+
+# Aggregate Data:
+Cust_data<- Ecom_data3 %>%
+  select(CustomerID, Country, StockCode, InvoiceNo, Quantity, Sales_Value) %>%
+  group_by(CustomerID, Country) %>%
+  summarise(Units = sum(Quantity), Sales = sum(Sales_Value),
+            Unique_SKUs = n_distinct(StockCode), 
+            Unique_Orders = n_distinct(InvoiceNo)) %>%
+  mutate(Average_Order_Value = round(Sales/Unique_Orders,2)) %>%
+  arrange(CustomerID, Country)
+
+Cust_data<- as.data.frame(Cust_data)
+
+dim(Cust_data)
+str(Cust_data)
+# View(Cust_data)
+
+# Add more variables - Recency and Frequency :
+RFM_df<- Ecom_data3 %>% 
+  group_by(CustomerID, Country) %>% 
+  summarise(Recency = abs(as.numeric(as.Date("2016-11-29")-max(InvoiceDate))),
+            Frequency = n_distinct(InvoiceNo), Monitary= sum(Sales_Value)/n_distinct(InvoiceNo)) %>%
+  arrange(CustomerID, Country)
+
+RFM_df<- as.data.frame(RFM_df)
+str(RFM_df)
+summary(RFM_df)
+
+Cust_data2<- cbind(Cust_data, RFM_df)
+head(Cust_data2)
+Cust_data3<- Cust_data2[c(1:7, 10:11)] #Remove duplicate column names - CountryID, Country and Monitary (Sales)
+str(Cust_data3)
+summary(Cust_data3)
+
+```
+
+
+# EDA: 
+1. Correlation Analysis
+2. Plots Before and After Normalizing KPIs
+3. Regression Analysis (Random Forest algo.) to understand signficant KPIs that impact Sales
+
+``` {r}
+# Correlation Analysis :
+
+library(corrplot)
+Cust_cor_data<- Cust_data3[-c(1,2)] #Data with numerical variables 
+str(Cust_cor_data)
+cor = cor(Cust_cor_data)
+corrplot(cor, method="number", type = "upper", order = "hclust", 
+         tl.col = "black")
+
+
+
+#Plots before Normalizing KPIs:
+par(mfrow=c(2,4))
+
+Units_dist<- hist(Cust_data3$Units, col = 'blue', breaks=10, labels = TRUE,
+                main ="Units Distrbution",
+                xlab = "Units", ylab = "#Customers")
+
+Sales_dist<- hist(Cust_data3$Sales, col = 'blue', breaks=10, labels = TRUE,
+                  main ="Sales Distrbution",
+                  xlab = "Sales", ylab = "#Customers")
+
+Unique_SKUs_dist<- hist(Cust_data3$Unique_SKUs, col = 'blue', breaks=10, labels = TRUE,
+                  main ="Unique_SKUs Distrbution",
+                  xlab = "Unique_SKUs", ylab = "#Customers")
+
+Unique_SKUs_dist<- hist(Cust_data3$Unique_SKUs, col = 'blue', breaks=10, labels = TRUE,
+                        main ="Unique_SKUs Distrbution",
+                        xlab = "Unique_SKUs", ylab = "#Customers")
+
+Unique_Orders_dist<- hist(Cust_data3$Unique_Orders, col = 'blue', breaks=10, labels = TRUE,
+                        main ="Unique_Orders Distrbution",
+                        xlab = "Unique_Orderss", ylab = "#Customers")
+
+AOV_dist<- hist(Cust_data3$Average_Order_Value, col = 'blue', breaks=10, labels = TRUE,
+                          main ="Average_Order_Value Distrbution",
+                          xlab = "Average_Order_Value", ylab = "#Customers")
+
+Recency_dist<- hist(Cust_data3$Recency, col = 'blue', breaks=10, labels = TRUE,
+                main ="Recency Distrbution",
+                xlab = "Recency_Days", ylab = "#Customers")
+
+Freq_dist<- hist(Cust_data3$Frequency, col = 'blue', breaks=50, labels = TRUE,
+                    main ="Frequency Distrbution",
+                    xlab = "Frequency", ylab = "#Customers")
+
+
+
+# KPIs Normalization : Min-Max
+
+# str(Cust_data3)
+Cust_data5<- Cust_data3[-c(1,2)] #with Numerical values
+# head(Cust_data5)
+# summary(Cust_data5)
+
+```
+
+# Normalize the KPIs using Min-Max scaling 
+``` {r}
+# First create normalize function and then normalize each KPIs
+
+normalize<- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+Cust_norm<- Cust_data5
+Cust_norm$Units<-normalize(Cust_data5$Units)
+Cust_norm$Sales<-normalize(Cust_data5$Sales)
+Cust_norm$Unique_SKUs<-normalize(Cust_data5$Unique_SKUs)
+Cust_norm$Unique_Orders<-normalize(Cust_data5$Unique_Orders)
+Cust_norm$Average_Order_Value<-normalize(Cust_data5$Average_Order_Value)
+Cust_norm$Recency<-normalize(Cust_data5$Recency)
+Cust_norm$Frequency<-normalize(Cust_data5$Frequency)
+
+str(Cust_norm)
+
+
+#Plots with Normalized KPIs
+par(mfrow=c(2,4))
+
+Units_norm_dist<- hist(Cust_norm$Units, col = 'blue', breaks=10, labels = TRUE,
+                  main ="Units Normalized",
+                  xlab = "Units", ylab = "#Customers")
+
+Sales_norm_dist<- hist(Cust_norm$Sales, col = 'blue', breaks=10, labels = TRUE,
+                  main ="Sales Normalized",
+                  xlab = "Sales", ylab = "#Customers")
+
+Unique_SKUs_norm_dist<- hist(Cust_norm$Unique_SKUs, col = 'blue', breaks=10, labels = TRUE,
+                        main ="Unique_SKUs Normalized",
+                        xlab = "Unique_SKUs", ylab = "#Customers")
+
+Unique_SKUs_norm_dist<- hist(Cust_norm$Unique_SKUs, col = 'blue', breaks=10, labels = TRUE,
+                        main ="Unique_SKUs Normalized",
+                        xlab = "Unique_SKUs", ylab = "#Customers")
+
+Unique_Orders_norm_dist<- hist(Cust_norm$Unique_Orders, col = 'blue', breaks=10, labels = TRUE,
+                          main ="Unique_Orders Normalized",
+                          xlab = "Unique_Orderss", ylab = "#Customers")
+
+AOV_norm_dist<- hist(Cust_norm$Average_Order_Value, col = 'blue', breaks=10, labels = TRUE,
+                main ="AOV Normalized",
+                xlab = "Average_Order_Value", ylab = "#Customers")
+
+Recency_norm_dist<- hist(Cust_norm$Recency, col = 'blue', breaks=10, labels = TRUE,
+                    main ="Recency Normalized",
+                    xlab = "Recency_Days", ylab = "#Customers")
+
+Freq_norm_dist<- hist(Cust_norm$Frequency, col = 'blue', breaks=50, labels = TRUE,
+                 main ="Frequency Normalized",
+                 xlab = "Frequency", ylab = "#Customers")
+
+```
+
+# Understand signficant KPIs that impact Sales
+
+``` {r}
+library(randomForest)
+formula<- Sales ~ Unique_SKUs + Unique_Orders + Average_Order_Value + Units + Recency + Frequency
+
+M.rf<- randomForest(formula, data=Cust_data5, ntree=500, importance=TRUE, proximity=TRUE, mtry=3)
+M.rf
+
+## Show "importance" of variables: higher value mean more important:
+round(importance(M.rf), 2)
+varImpPlot(M.rf, main = "Variable Importance")
+
+```
+
+# Insights:
+1. Normalizing the KPIs would keep the KPIs range between 0 and 1 where mean is 0 for all KPIs. It would be used in Customer segmentation modelling
+2. Top 4 Key significant variables that impact Sales are - Units, Average order value, Unique Orders and Frequency
+
+# Build Segmentation Models - K-means and Hierarchial Clustering :
+1. K-means :
+   a. Identify right no. of clusters  - by using Elbow/Scree-plot and Sihoutte score
+   b. Customer Profiling 
+
+2. Hierarchial Clustering:
+   a. 
+
+# K-means:
+
+``` {r}
+library(factoextra)
+library(NbClust)
+library(cluster)
+
+# Elbow/Scree-plot :
+fviz_nbclust(Cust_norm, kmeans, method = "wss") +
+  geom_vline(xintercept = 5, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+# Silhouette method plot
+silhouette_score2 <- function(k){
+  km <- kmeans(Cust_data5, centers = k, nstart=25)
+  ss <- silhouette(km$cluster, dist(Cust_norm))
+  mean(ss[, 3])
+}
+k <- 2:10
+avg_sil2<- sapply(k, silhouette_score2)
+#avg_sil2
+plot(k, type='b', avg_sil2, xlab='Number of clusters', ylab='Average Silhouette Scores', main = "Silhoutette Score" , frame=FALSE)
+
+set.seed(123)
+fit_n2<- kmeans(Cust_norm, centers = 2, iter.max = 10)
+#fit_n2
+fit_n3<- kmeans(Cust_norm, centers = 3, iter.max = 10)
+#fit_n3
+fit_n4<- kmeans(Cust_norm, centers = 4, iter.max = 10)
+#fit_n4
+fit_n5<- kmeans(Cust_norm, centers = 5, iter.max = 10)
+fit_n5
+fit_n5$centers
+fit_n5$size
+
+# plots to compare
+p2 <- fviz_cluster(fit_n2, geom = "point", data = Cust_norm) + ggtitle("k = 2")
+p3 <- fviz_cluster(fit_n3, geom = "point",  data = Cust_norm) + ggtitle("k = 3")
+p4 <- fviz_cluster(fit_n4, geom = "point",  data = Cust_norm) + ggtitle("k = 4")
+p5 <- fviz_cluster(fit_n5, geom = "point",  data = Cust_norm) + ggtitle("k = 5")
+
+library(gridExtra)
+grid.arrange(p2, p3, p4, p5, nrow = 2)
+
+fviz_cluster(fit_n5, data = Cust_data5,
+             palette = c("blue", "green", "purple",  "red", "black"), 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+)
+
+# Segmentation plot:
+library(fpc)
+plotcluster(Cust_norm, fit_n5$cluster)
+
+Cust_data_combined2<- data.frame(Cust_data3, Kmeans_Cluster = fit_n5$cluster)
+str(Cust_data_combined2)
+
+```
+
+# Insights:
+1. Final K-means model selected is fit_n5 with 5 clusters as it gave optimal clusters shown through both Elbow and Silhoutte score methods. The Within cluster Sum of sqrs. (wss) by cluster is 89.4%
+2. There are 18 customers which have significantly high Sales
+
+
+
+# Customer Profiling - Kmeans:
+
+``` {r}
+
+Customer_Segment<- Cust_data_combined2 %>%
+  select(CustomerID, Kmeans_Cluster, Units, Sales, Unique_SKUs, Unique_Orders, Average_Order_Value) %>%
+  group_by(Kmeans_Cluster) %>%
+  summarise(Unique_Customers = n_distinct(CustomerID), Avg_Units = mean(Units), Avg_Sales = mean(Sales), 
+            Avg_Unique_SKUs = mean(Unique_SKUs), Avg_Unique_Orders = mean(Unique_Orders),
+            AOV = mean(Average_Order_Value)) %>%
+  arrange(Kmeans_Cluster)
+
+Customer_Segment_km<- as.data.frame(Customer_Segment)
+Customer_Segment_km
+
+```
+
+# Segment 2 customers - 18 total customers:
+
+``` {r}
+KM_Customer_Segment2<- Cust_data_combined2 %>%
+  select(CustomerID, Kmeans_Cluster, Country, Units, Sales, Unique_SKUs, Unique_Orders, Average_Order_Value) %>%
+  group_by(CustomerID, Kmeans_Cluster) %>%
+  summarise(Unique_Customers = n_distinct(CustomerID), Avg_Units = mean(Units), Avg_Sales = mean(Sales), 
+            Avg_Unique_SKUs = mean(Unique_SKUs), Avg_Unique_Orders = mean(Unique_Orders),
+            AOV = mean(Average_Order_Value)) %>%
+  filter(Kmeans_Cluster== "2")
+
+KM_Customer_Segment2
+
+```
+
+
+# Hierarchical clustering:
+
+``` {r}
+
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering visualization
+library(dendextend) # for comparing two dendrograms
+
+# Compute distance
+dist_mat<- dist(Cust_data5, method = "euclidian")
+# dist_mat
+fit_h<- hclust(dist_mat, method = "ward.D")
+plot(fit_h)
+
+# Select 4 clusters
+sales_clus1<- cutree(fit_h, k = 4) # with 4 clusters
+table(sales_clus1)
+# 4 clusters looks ideal
+# split the clusters further... 
+
+sales_clus2<- cutree(fit_h, k = 5) # with 5 clusters
+table(sales_clus2)
+
+Cust_hier_cluster<- data.frame(Cust_data_combined2, Hier_Cluster_K4 = sales_clus1, Hier_Cluster_K5 = sales_clus2)
+summary(Cust_hier_cluster)
+
+```
+
+# Customer Profiling - Hierarchial Clustering with 5 clusters :
+
+``` {r}
+
+Customer_Segment_hier<- Cust_hier_cluster %>%
+  select(CustomerID, Hier_Cluster_K4, Units, Sales, Unique_SKUs, Unique_Orders, Average_Order_Value) %>%
+  group_by(Hier_Cluster_K4) %>%
+  summarise(Unique_Customers = n_distinct(CustomerID), Avg_Units = mean(Units), Avg_Sales = mean(Sales), 
+            Avg_Unique_SKUs = mean(Unique_SKUs), Avg_Unique_Orders = mean(Unique_Orders),
+            AOV = mean(Average_Order_Value)) %>%
+  arrange(Hier_Cluster_K4)
+
+Customer_Segment_hier<- as.data.frame(Customer_Segment_hier)
+Customer_Segment_hier
+
+# Customer Profiling - Hierarchial Clustering with 5 clusters :
+Customer_Segment_hier2<- Cust_hier_cluster %>%
+  select(CustomerID, Hier_Cluster_K5, Units, Sales, Unique_SKUs, Unique_Orders, Average_Order_Value) %>%
+  group_by(Hier_Cluster_K5) %>%
+  summarise(Unique_Customers = n_distinct(CustomerID), Avg_Units = mean(Units), Avg_Sales = mean(Sales), 
+            Avg_Unique_SKUs = mean(Unique_SKUs), Avg_Unique_Orders = mean(Unique_Orders),
+            AOV = mean(Average_Order_Value)) %>%
+  arrange(Hier_Cluster_K5)
+
+```
+
+
+# Comparing Customer Profiles of K-means and Hierachial Clustering Algorithms :
+
+``` {r}
+
+Customer_Segment_km
+Customer_Segment_hier2
+
+```
+
+# Insight:
+K-means gives better result in terms of distribution of clusters compared to Hierarchial clustering
